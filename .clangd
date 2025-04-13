@@ -1,0 +1,11 @@
+CompileFlags:
+  Add:
+  [
+    "-xc",
+    "-std=c99",
+    "-Wall",
+    "-Wextra",
+    "-ffreestanding",
+    "-nostdlib"
+  ]
+  Compiler: i686-elf-gcc
