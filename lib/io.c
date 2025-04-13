@@ -5,24 +5,13 @@
 #include <lib/string.h>
 #include <lib/io.h>
 
+typedef void (*put_char_fn)(char);
+typedef void (*put_serial_fn)(uint16_t, char);
 
-void
-kput(
-    const char *string
-) {
-    for (size_t index = 0; index < string_length(string); index++) {
-        tty_put_character(string[index]);
-    }
-}
-
-void
-kputf(
-    const char *string,
-    ...
-) {
-    va_list list;
-    va_start(list, string);
-    
+static void
+format_string(const char *string, va_list list, void *context, 
+              void (*put_string)(void*, const char*),
+              void (*put_char)(void*, char)) {
     char arg_character;
     char *arg_buffer;
     int arg_number;
@@ -30,42 +19,69 @@ kputf(
 
     while (*string) {
         char character = *string++;
-        switch (character) {
-        case '%':
+        if (character == '%') {
             character = *string++;
-            if (character == 's') {
-                arg_buffer = va_arg(list, char *);
-                kput(arg_buffer);
-            } else if (character == 'd') {
-                arg_number = va_arg(list, int);
-                string_int_to_string(arg_number, arg_number_str, 10);
-                kput(arg_number_str);
-            } else if (character == 'x') {
-                arg_number = va_arg(list, int);
-                string_int_to_string(arg_number, arg_number_str, 16);
-                kput(arg_number_str);
-            } else if (character == 'c') {
-                arg_character = va_arg(list, int);
-                tty_put_character(arg_character);
-            } else if (character == '%') {
-                tty_put_character('%');
+            switch (character) {
+                case 's':
+                    arg_buffer = va_arg(list, char*);
+                    put_string(context, arg_buffer);
+                    break;
+                case 'd':
+                    arg_number = va_arg(list, int);
+                    string_int_to_string(arg_number, arg_number_str, 10);
+                    put_string(context, arg_number_str);
+                    break;
+                case 'x':
+                    arg_number = va_arg(list, int);
+                    string_int_to_string(arg_number, arg_number_str, 16);
+                    put_string(context, arg_number_str);
+                    break;
+                case 'c':
+                    arg_character = va_arg(list, int);
+                    put_char(context, arg_character);
+                    break;
+                case '%':
+                    put_char(context, '%');
+                    break;
+                default:
+                    put_char(context, '%');
+                    put_char(context, character);
+                    break;
             }
-            break;
-        default:
-            tty_put_character(character);
-            break;
+        } else {
+            put_char(context, character);
         }
     }
+}
 
+static void 
+tty_put_string(void *context, const char *string) {
+    for (size_t index = 0; index < string_length(string); index++) {
+        tty_put_character(string[index]);
+    }
+}
+
+static void
+tty_put_char_wrapper(void *context, char c) {
+    tty_put_character(c);
+}
+
+void
+kput(const char *string) {
+    tty_put_string(NULL, string);
+}
+
+void
+kputf(const char *string, ...) {
+    va_list list;
+    va_start(list, string);
+    format_string(string, list, NULL, tty_put_string, tty_put_char_wrapper);
     va_end(list);
 }
 
-
-void
-sput(
-    uint16_t com_port,
-    const char *string
-) {
+static void
+serial_put_string(void *context, const char *string) {
+    uint16_t com_port = *(uint16_t*)context;
     for (size_t index = 0; index < string_length(string); index++) {
         if (string[index] == '\n') {
             serial_port_write(com_port, '\r');
@@ -74,51 +90,24 @@ sput(
     }
 }
 
+static void
+serial_put_char(void *context, char c) {
+    uint16_t com_port = *(uint16_t*)context;
+    if (c == '\n') {
+        serial_port_write(com_port, '\r');
+    }
+    serial_port_write(com_port, c);
+}
+
 void
-sputf(
-    uint16_t com_port,
-    const char *string,
-    ...
-) {
+sput(uint16_t com_port, const char *string) {
+    serial_put_string(&com_port, string);
+}
+
+void
+sputf(uint16_t com_port, const char *string, ...) {
     va_list list;
     va_start(list, string);
-    
-    char arg_character;
-    char *arg_buffer;
-    int arg_number;
-    char arg_number_str[12] = { 0 };
-
-    while (*string) {
-        char character = *string++;
-        switch (character) {
-        case '%':
-            character = *string++;
-            if (character == 's') {
-                arg_buffer = va_arg(list, char *);
-                sput(com_port, arg_buffer);
-            } else if (character == 'd') {
-                arg_number = va_arg(list, int);
-                string_int_to_string(arg_number, arg_number_str, 10);
-                sput(com_port, arg_number_str);
-            } else if (character == 'x') {
-                arg_number = va_arg(list, int);
-                string_int_to_string(arg_number, arg_number_str, 16);
-                sput(com_port, arg_number_str);
-            } else if (character == 'c') {
-                arg_character = va_arg(list, int);
-                if (arg_character == '\n') {
-                    serial_port_write(com_port, '\r');
-                }
-                serial_port_write(com_port, arg_character);
-            } else if (character == '%') {
-                serial_port_write(com_port, '%');
-            }
-            break;
-        default:
-            tty_put_character(character);
-            break;
-        }
-    }
-
+    format_string(string, list, &com_port, serial_put_string, serial_put_char);
     va_end(list);
 }
